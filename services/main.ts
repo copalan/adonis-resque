@@ -12,7 +12,7 @@ export function getConnection() {
         port: Number.parseInt(connection.port ?? '6379'),
         options: connection,
         pkg: 'ioredis',
-        database: 0,
+        database: connection.db ?? 0,
     }
 }
 
