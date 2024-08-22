@@ -77,7 +77,8 @@
 ## Installation
 
 ```bash
-node ace add adonis-resque
+npm i adonis-resque@2.0.0-alpha.0
+node ace configure adonis-resque
 ```
 > [!IMPORTANT]
 > `@adonisjs/redis` is required for resque redis connection.
