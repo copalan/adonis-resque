@@ -25,6 +25,9 @@ export default class ResqueProvider {
         })
         const emitter = await this.app.container.make('emitter')
         emitter.on('resque:failure', async failure => {
+            if (!failure?.job?.job) {
+                throw failure.failure
+            }
             return failure.job.job.onFailure(failure)
         })
     }

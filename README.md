@@ -24,6 +24,7 @@
 - [Handle Failure Jobs](#handle-failure-jobs)
   - [Job.onFailure](#jobonfailure)
   - [Failure Event](#failure-event)
+- [Dependency Injection in Job Classes](#dependency-injection-in-job-classes)
 - [Demonstration](#demonstration)
   - [Send Mail Job](#send-mail-job)
 - [Plugin](#plugin)
@@ -49,8 +50,14 @@
 - [Who's Using](#whos-using)
 - [Contributors](#contributors)
 - [Reference](#reference)
+- [Migration from v1 to v2](#migration-from-v1-to-v2)
+  - [Changes in ver 2](#changes-in-ver-2)
+    - [this.logger Removed](#thislogger-removed)
+    - [Chainable Methods Removed](#chainable-methods-removed)
+    - [Dependency Injection Now Available in Job Files](#dependency-injection-now-available-in-job-files)
 - [License](#license)
 
+<!-- /TOC -->
 <!-- /TOC -->
 <!-- /TOC -->
 
@@ -107,9 +114,10 @@ Every job has a perform method. It runs in the background, which consumer from t
 
 ```typescript
 import { BaseJob } from 'adonis-resque'
+import logger from '@adonisjs/core/services/logger'
 export default class BasicExample extends BaseJob {
   async perform(name: string) {
-    this.logger.info(`Hello ${name}`)
+    logger.info(`Hello ${name}`)
   }
 }
 ```
@@ -139,12 +147,12 @@ await BasicExample.enqueueAll([
 ### Delayed enqueue
 ```typescript
 const oneSecondLater = 1000
-await BasicExample.enqueue('Bob').in(oneSecondLater)
+await BasicExample.enqueueIn(oneSecondLater, 'Bob')
 ```
 Or enqueue at a specify timestamp
 ```typescript
 const fiveSecondsLater = new Date().getTime() + 5000
-await BasicExample.enqueue('Bob').at(fiveSecondsLater)
+await BasicExample.enqueueAt(fiveSecondsLater, 'Bob')
 ```
 
 ### Repeated Enqueue
@@ -156,14 +164,16 @@ class Job has the schedule properties.
 The example below enqueue in both every 1 second and 5 minutes, since it's `cron`/`interval` settings.
 
 ```typescript
-export default class BasicExample extends BaseJob {
-  // enqueue job cronly
-  cron: '*/1 * * * * *',
-  // enqueue every five minutes
-  interval: '5m',
-  async perform(name: string) {
-    this.logger.log(`Hello ${name}`)
-  }
+import logger from '@adonisjs/core/services/logger'
+import { BaseJob } from 'adonis-resque'
+export default class Repeater extends BaseJob {
+    // enqueue job cronly
+    cron = '*/1 * * * * *'
+    // enqueue every five minutes
+    interval = '5m'
+    async perform() {
+        logger.info(`Repeater every 5 minutes / every seconds`)
+    }
 }
 ```
 
@@ -213,6 +223,29 @@ emitter.on('resque:failure', (failure) => {
 })
 ```
 
+## Dependency Injection in Job Classes
+Starting from version 2+, dependency injection is now supported in class-based jobs. Since jobs run in the background, you cannot inject the current HttpContext.
+
+Here’s an example of a job that injects the logger:
+
+```typescript
+import { inject } from '@adonisjs/core'
+import type { Logger } from '@adonisjs/core/logger'
+import { BaseJob } from 'adonis-resque'
+
+@inject()
+export default class BasicExample extends BaseJob {
+    constructor(public logger: Logger) {
+        super()
+    }
+  
+    perform() {
+        this.logger.info('Basic example')
+        return 'gogogo'
+    }
+}
+```
+
 ## Demonstration
 ### Send Mail Job
 
@@ -224,6 +257,7 @@ Run `node ace make:job Mail` to create the mail job, then edit it in `app/jobs/m
 
 ```typescript
 import { BaseJob } from 'adonis-resque'
+import logger from '@adonisjs/core/services/logger'
 import mail from '@adonisjs/mail/services/main'
 import { MessageBodyTemplates, NodeMailerMessage } from '@adonisjs/mail/types'
 
@@ -238,7 +272,7 @@ export default class Mail extends BaseJob {
     async perform(option: Options) {
         const { messageId } = await mail.use('smtp')
             .sendCompiled(option.mailMessage, option.config)
-        this.logger.info(`Email sent, id is ${messageId}`)
+        logger.info(`Email sent, id is ${messageId}`)
     }
 }
 ```
@@ -293,15 +327,16 @@ If reEnqueue is `true`, the job will be put back (re-enqueue) with a delay <enqu
 
 ```typescript
 import { BaseJob, Plugin } from "adonis-resque"
+import logger from '@adonisjs/core/services/logger'
 
 export default class ExampleJob extends BaseJob {
     plugins = [
         Plugin.jobLock({ reEnqueue: false, enqueueTimeout: 3000 })
     ]
     async perform() {
-        this.logger.info('Example job started')
+        logger.info('Example job started')
         await sleep(60000)
-        this.logger.info('Example job done')
+        logger.info('Example job done')
     }
 }
 
@@ -332,8 +367,8 @@ Same as queueLock, but it is for the delay queue.
 
 > [!IMPORTANT]
 > **How "Prevented Before Enqueue" Works?**  
-> The `delayQueueLock` only prevents immediate enqueue operations; it doesn't prevent delayed enqueue operations, such as those using `in` or `at`.
-> In `node-resque`, only non-delayed enqueue operations trigger the `beforeEnqueue` hook. If you use `in` or `at`, the hook is not triggered. 
+> The `delayQueueLock` only prevents immediate enqueue operations; it doesn't prevent delayed enqueue operations, such as those using `enqueueIn` or `enqueueAt`.
+> In `node-resque`, only non-delayed enqueue operations trigger the `beforeEnqueue` hook. If you use `enqueueIn` or `enqueueAt`, the hook is not triggered. 
 > [Here is source code](https://github.com/actionhero/node-resque/blob/a7eb5742df427aaf338efcc40579534ac458f57b/src/core/queue.ts#L86)
 > 
 > Therefore, in the following code, the second operation won't be enqueued:
@@ -345,14 +380,14 @@ Same as queueLock, but it is for the delay queue.
 >     ]
 >     async perform() {}
 > }
-> await ExampleJob.enqueue().in(1000)
+> await ExampleJob.enqueueIn(1000)
 > // won't enqueue to queue
 > await ExampleJob.enqueue()
 > ```
 > However, in the following code, the job will perform twice, no matter if the `delayQueueLock` plugin is enabled or not:
 > ```typescript
-> await ExampleJob.enqueue().in(1000)
-> await ExampleJob.enqueue().in(1500)
+> await ExampleJob.enqueueIn(1000)
+> await ExampleJob.enqueueIn(1500)
 > ```
 
 
@@ -562,7 +597,7 @@ Scheduler is a kind of specialized internal worker. It is a coordinator of the j
 
 the Utilities are:
 - Support croner & interval jobs
-- Process delayed job (`job.in`/`job.at`)
+- Process delayed job (`job.enqueueIn`/`job.enqueueAt`)
 - Checking stuck workers
 - General cluster cleanup
 - ...
@@ -680,6 +715,29 @@ This project is contributed by u301 team for giving back to the AdonisJS communi
 ## Reference
 
 - [node-resque](https://github.com/actionhero/node-resque)
+
+## Migration from v1 to v2
+In the latest version of AdonisJS, the previous method of directly creating an instance of @adonisjs/logger (used in v1) is no longer compatible. 
+To address this, adonis-resque has been upgraded to v2, with changes to the API interface.
+
+### Changes in ver 2
+
+#### this.logger Removed
+`this.logger` removed in Job. You can use `import logger from '@adonisjs/core/services/logger'` instead.
+
+#### Chainable Methods Removed
+In v1, you could use chainable calls like `await ExampleJob.enqueue(...args).in(1000)`. However, this feature has been removed in v2. Now, you should use `await ExampleJob.enqueueIn(1000, ...args)` instead. Additionally, these methods now return a Promise, whereas they previously only returned this. 
+
+The following methods have been removed:
+
+- in
+- at
+- The static method queue()
+
+Since Resque's functionality is relatively simple, the benefits of chainable calls are minimal, and they also hinder Adonis's dependency injection capabilities.
+
+#### Dependency Injection Now Available in Job Files
+With the removal of chainable calls, dependency injection is now available in job files. However, keep in mind that because jobs run in the background, the `HttpContext` cannot be injected.
 
 ## License
 MIT

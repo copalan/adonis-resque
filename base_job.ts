@@ -1,7 +1,5 @@
 import app from "@adonisjs/core/services/app"
 import { ResqueConfig, ResqueFailure } from "./types.js"
-import { Logger, LoggerManager } from "@adonisjs/core/logger"
-import { LoggerConfig, LoggerManagerConfig } from "@adonisjs/core/types/logger"
 import { Plugin } from "node-resque"
 
 export default class BaseJob {
@@ -28,66 +26,27 @@ export default class BaseJob {
     hasEnqueued: boolean = false
     hasEnqueuedAll: boolean = false
     app = app
-    logger: Logger
+
     constructor(..._args: any[]) {
-        this.logger = this.createLogger()
-    }
-    private createLogger() {
-        const loggerName = app.config.get<string | null>('resque.logger')
-        const loggerConfig = app.config.get<LoggerManagerConfig<Record<string, LoggerConfig>>>('logger')
-        const manager = new LoggerManager(loggerConfig)
-        if (loggerName) {
-            return manager.use(loggerName)
-        } else {
-            return manager.use()
-        }
-    }
-    static enqueue<T extends typeof BaseJob>(this: T, ...args: Parameters<T['prototype']['perform']>) {
-        const job = new this
-        return job.enqueue(...args)
-    }
-    enqueue<T extends BaseJob>(this: T, ...args: Parameters<T['perform']>) {
-        this.args = args
-        this.hasEnqueued = true
-        return this
-    }
-    static queue(queueName: string) {
-        const job = new this
-        return job.queue(queueName)
+
     }
     queue(queueName: string) {
         this.queueName = queueName
         return this
     }
-    static enqueueAll<T extends typeof BaseJob>(this: T, args: Parameters<T['prototype']['perform']>[]) {
-        const job = new this
+    static async enqueueAll<T extends typeof BaseJob>(this: T, args: Parameters<T['prototype']['perform']>[]) {
+        const job = await app.container.make(this)
         return job.enqueueAll(args)
     }
-    enqueueAll<T extends BaseJob>(this: T, args: Parameters<T['perform']>[]) {
+    async enqueueAll<T extends BaseJob>(this: T, args: Parameters<T['perform']>[]) {
         this.allArgs = args
         this.hasEnqueuedAll = true
-        return this
-    }
-
-    static in(ms: number) {
-        return (new this).in(ms)
-    }
-    in(ms: number) {
-        this.delayMs = ms
-        return this
-    }
-    static at(ms: number) {
-        return (new this).at(ms)
-    }
-    at(ms: number) {
-        this.runAtMs = ms
-        return this
+        return this.execute()
     }
     perform(..._args: any[]): any {
 
     }
     handleError(error: unknown) {
-        this.logger.error((error as Error).message)
         throw error
     }
     onFailure(_failure: ResqueFailure): void | Promise<void> {}
@@ -96,6 +55,10 @@ export default class BaseJob {
         const jobName = this.jobName ?? this.constructor.name
         const queueName = this.queueName ?? resqueConfig.queueNameForJobs
         const queue = await app.container.make('queue')
+        let logger = await app.container.make('logger')
+        if (resqueConfig.logger) {
+            logger.use(resqueConfig.logger)
+        }
         if (this.hasEnqueued) {
             const getTips = () => {
                 if (!resqueConfig.verbose) {
@@ -110,7 +73,10 @@ export default class BaseJob {
                     return tips
                 }
             }
-            this.logger.info(getTips())
+            const tips = getTips()
+            if (tips) {
+                logger.info(tips)
+            }
             if (this.delayMs) {
                 return queue.enqueueIn(this.delayMs, queueName, jobName, this.args)
             } else if (this.runAtMs) {
@@ -124,15 +90,56 @@ export default class BaseJob {
             return false
         }
     }
+
+
+    private push<T extends BaseJob>({ args, delayMs, runAtMs }: {
+        args: Parameters<T['perform']>;
+        delayMs?: number
+        runAtMs?: number
+    }) {
+        this.args = args
+        this.hasEnqueued = true
+        this.delayMs = delayMs ? delayMs : 0
+        this.runAtMs = runAtMs
+        return this.execute()
+    }
+
+    static async enqueue<T extends typeof BaseJob>(this: T, ...args: Parameters<InstanceType<T>['perform']>) {
+        const job = await app.container.make(this)
+        return job.enqueue(...args)
+    }
+    async enqueue<T extends BaseJob>(this: T, ...args: Parameters<T['perform']>) {
+        return this.push({
+            args
+        })
+    }
+
     /**
-     * this method runs after an `await` statement
-     * e.g, 
-     * ```typescript
-     * await job.enqueue().in(2000)
-     * ```
-     * @param fn 
+     * 
+     * @param this 
+     * @param delayMs In ms, the number of ms to delay before this job is able to start being worked on
+     * @param args
+     * @returns 
      */
-    then(fn: (result: void | boolean | boolean[]) => void) {
-        this.execute().then(fn)
+    static async enqueueIn<T extends typeof BaseJob>(this: T, delayMs: number, ...args: Parameters<InstanceType<T>['perform']>) {
+        const job = await app.container.make(this)
+        return job.enqueueIn(delayMs, ...args)
+    }
+    async enqueueIn<T extends BaseJob>(this: T, delayMs: number, ...args: Parameters<T['perform']>) {
+        return this.push({
+            args,
+            delayMs,
+        })
+    }
+
+    static async enqueueAt<T extends typeof BaseJob>(this: T, runAtMs: number, ...args: Parameters<InstanceType<T>['perform']>) {
+        const job = await app.container.make(this)
+        return job.enqueueAt(runAtMs, ...args)
+    }
+    async enqueueAt<T extends BaseJob>(this: T, runAtMs: number, ...args: Parameters<T['perform']>) {
+        return this.push({
+            args,
+            runAtMs,
+        })
     }
 }

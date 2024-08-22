@@ -22,14 +22,12 @@ export async function importAllJobs() {
         if (typeof job?.prototype?.enqueue !== 'function') {
             return false
         }
-        if (typeof job?.prototype?.then !== 'function') {
-            return false
-        }
         return true
     }
     const Jobs = Object.values(jobs).filter(isValidJob)
-    return Jobs.reduce((accumulator, Job) => {
-        const job = new Job
+    return Jobs.reduce(async (initlizedAccumulator, Job) => {
+        let accumulator = await initlizedAccumulator
+        const job = await app.container.make(Job)
         if (!Array.isArray(job.plugins)) {
             job.plugins = []
         }
@@ -52,5 +50,5 @@ export async function importAllJobs() {
             pluginOptions
         }
         return accumulator
-    }, {} as Record<string, NodeResqueJob>)
+    }, Promise.resolve<Record<string, NodeResqueJob>>({}))
 }
