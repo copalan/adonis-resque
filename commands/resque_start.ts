@@ -50,6 +50,8 @@ export default class ResqueStart extends BaseCommand {
         const jobs = await importAllJobs()
         const emitter = await this.app.container.make('emitter')
         const verbose = this.verbose?? getConfig('verbose')
+        const router = await this.app.container.make('router')
+        router.commit()
         if (this.worker) {
             const queueNames =
                 this.queueName ?? getConfig('queueNameForWorkers')
