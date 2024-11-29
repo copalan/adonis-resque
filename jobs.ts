@@ -7,6 +7,11 @@ export async function importAllJobs() {
     const jobs: Record<string, unknown> = await fsImportAll(app.makePath('app/jobs'), {
         ignoreMissingRoot: true
     })
+    for(const obj of Object.values(jobs)) {
+        for (const [key, value] of Object.entries(obj)) {
+          jobs[key] = value
+        }
+    }
     /**
      * Duck typing check
      * @param job 
